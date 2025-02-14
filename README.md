@@ -1,6 +1,6 @@
 # BtHomeDecoder for esp32
 
-Made this to help debug my soilssense bluetooth sensor.
+Decoder for the BTHome bluetooth protocol without the need of a mqtt server or anything else. just run it on an ESP32 and get messages back over serial. Made this to help debug my soilssense bluetooth sensor.
 
 Note, use the specified versions of the NimBLEDevice@1.3.1 and ArduinoJson@6.18.3 when running the main. 
 
