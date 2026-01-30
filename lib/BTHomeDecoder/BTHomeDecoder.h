@@ -13,6 +13,7 @@ struct BTHomeMeasurement {
     float value;
     String name;
     bool isValid;
+    String unit;
 };
 
 struct BTHomeDecodeResult {
@@ -34,7 +35,8 @@ public:
     ~BTHomeDecoder() {}
 
     BTHomeDecodeResult parseBTHomeV2(
-        const std::vector<uint8_t>& serviceData,
+        // const std::vector<uint8_t>& serviceData,
+        const std::string& serviceData,
         const std::string& macString,
         const std::string& keyHex
     );
@@ -46,9 +48,11 @@ private:
                          const uint8_t* macBytes, uint8_t advInfo,
                          const uint8_t* key, const uint8_t* counter,
                          uint8_t* plaintextOut, size_t &plaintextLenOut);
-
+    bool hasLengthByte(uint8_t objID);
     int    getObjectDataLength(uint8_t objID);
     float  getObjectFactor(uint8_t objID);
+    bool   getObjectSignedNess(uint8_t objID);
+    String getObjectUnit(uint8_t objID);
     String getObjectName(uint8_t objID);
 
     float  parseSignedLittle(const uint8_t* data, size_t len, float factor);
