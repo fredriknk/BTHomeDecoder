@@ -1,0 +1,24 @@
+#######################################
+# Syntax Colouring Map for BTHomeDecoder
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+BLEScanner	KEYWORD1
+BTHomeDecoder	KEYWORD1
+BTHomeMeasurement	KEYWORD1
+BTHomeDecodeResult	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+process	KEYWORD2
+setBTHomeKey	KEYWORD2
+setActiveScan	KEYWORD2
+stats	KEYWORD2
+parseBTHomeV2	KEYWORD2
+instance	KEYWORD2
