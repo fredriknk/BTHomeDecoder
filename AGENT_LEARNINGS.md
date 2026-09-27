@@ -17,12 +17,19 @@
   — now `const uint8_t* getManufacturerData(size_t *len)` and `const uint8_t* getServiceData(size_t idx, size_t *len)`.
 - `getServiceDataUUIDCount()` renamed to `getServiceDataCount()`.
 - `getAddress().toString()`, `getName()`, `haveX()`, `getTXPower()`, `getServiceUUID()` accessors kept
-  same names/signatures — no ifdef needed there.
+  same names/signatures — no ifdef needed there. **But** on the pre-4.x (3.x) lib these accessors are
+  all non-`const` member functions (`BLEAddress getAddress();` not `... getAddress() const;`). A shared
+  `onAdvertised(const BLEAdvertisedDevice &advertisedDevice)` free function compiles fine against the
+  4.x lib but fails `-fpermissive` ("passing const ... discards qualifiers") against 3.x. Fix: take the
+  parameter **by value**, `onAdvertised(BLEAdvertisedDevice advertisedDevice)` — matches the original
+  3.x callback signature (`onResult(BLEAdvertisedDevice advertisedDevice)` was also by value) and still
+  binds fine as a `std::function<void(const BLEAdvertisedDevice&)>` for 4.x's `onResult()`.
 
 Detect version with `ESP_ARDUINO_VERSION_MAJOR` (from `esp_arduino_version.h`, pulled in by `Arduino.h`).
 Fixed by ifdefing `examples/BTHomeScan/BLEScanner.cpp` on `#if ESP_ARDUINO_VERSION_MAJOR >= 4` at each
 divergence point (includes, `Impl::pBLEScan` type, manufacturer/service-data extraction, callback
-registration, `scanTask`), keeping the pre-4.x code path for older platform pins.
+registration, `scanTask`), keeping the pre-4.x code path for older platform pins. Verified building
+against both `61.04.00-RC1` (framework 4.0.0) and `55.03.312` (framework 3.3.12) pins in `platformio.ini`.
 
 ## PlatformIO stale `.pio/libdeps` copy of `file://src` local library
 

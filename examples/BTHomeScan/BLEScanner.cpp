@@ -139,7 +139,7 @@ static bool decodeBTHome(JsonObject BLEdata, JsonDocument &json,
 // ---------------------------------------------------------------------------
 // BLE scan callback — enqueues raw advertisement data as MsgPack
 // ---------------------------------------------------------------------------
-static void onAdvertised(const BLEAdvertisedDevice &advertisedDevice) {
+static void onAdvertised(BLEAdvertisedDevice advertisedDevice) {
     if (!s_impl || !s_impl->queue)
         return;
 
