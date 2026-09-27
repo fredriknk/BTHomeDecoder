@@ -131,7 +131,7 @@ BTHomeDecodeResult BTHomeDecoder::parseBTHomeV2(
         }
         log_v("DEBUG: objectID=0x%02X dataLen=%d", objID, dataLen);
         if (dataLen < 0) {
-            log_d("DEBUG: Unknown objectID => stopping parse");
+            log_d("DEBUG: Unknown objectID 0x%02X => stopping parse", objID);
             break;
         }
         if (idx + dataLen > payload.size()) {
@@ -204,6 +204,7 @@ bool BTHomeDecoder::decryptAESCCM(
     size_t micLen = 4;
     size_t rawCipherLen = ciphertextLen - micLen;
 
+#if BTHOMEDECODER_USE_LEGACY_MBEDTLS_CCM
     mbedtls_ccm_context ctx;
     mbedtls_ccm_init(&ctx);
     int ret = mbedtls_ccm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 128);
@@ -226,6 +227,39 @@ bool BTHomeDecoder::decryptAESCCM(
         return false;
     plaintextLenOut = rawCipherLen;
     return true;
+#else
+    static bool psa_ready = false;
+    if (!psa_ready) {
+        if (psa_crypto_init() != PSA_SUCCESS)
+            return false;
+        psa_ready = true;
+    }
+
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_CCM);
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_key_id_t key_id;
+    if (psa_import_key(&attr, key, 16, &key_id) != PSA_SUCCESS)
+        return false;
+
+    // psa_aead_decrypt takes ciphertext+tag as one buffer, which is what
+    // `ciphertext`/`ciphertextLen` already are (tag = trailing micLen bytes).
+    size_t out_len = 0;
+    psa_status_t ret = psa_aead_decrypt(
+        key_id, PSA_ALG_CCM,
+        nonce, sizeof(nonce),
+        nullptr, 0, // no AAD
+        ciphertext, ciphertextLen,
+        plaintextOut, rawCipherLen, &out_len);
+
+    psa_destroy_key(key_id);
+
+    if (ret != PSA_SUCCESS)
+        return false;
+    plaintextLenOut = out_len;
+    return true;
+#endif
 }
 
 bool BTHomeDecoder::hasLengthByte(uint8_t objID) {
@@ -309,6 +343,7 @@ int BTHomeDecoder::getObjectDataLength(uint8_t objID) {
         case 0x3A: // button
         case 0x57: // temperature (sint8)
         case 0x58: // temperature (sint8, factor 0.35)
+        case 0x65: // settings_revision
             return 1;
         case 0x3E:
         case 0x4C:
@@ -638,6 +673,8 @@ String BTHomeDecoder::getObjectName(uint8_t objID) {
             return "speed";
         case 0x63:
             return "acceleration";
+        case 0x65:
+            return "settings_revision";
         case 0xF0:
             return "device_type_id";
         case 0xF1:
