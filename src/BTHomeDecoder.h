@@ -3,7 +3,18 @@
 #include <Arduino.h>
 #include <vector>
 #include <string>
+
+// mbedtls 4.x (TF-PSA-Crypto refactor, e.g. pioarduino platform-espressif32
+// 61.x) dropped the classic public mbedtls/ccm.h header; CCM is only reachable
+// via the PSA Crypto API there. Detect at compile time so this still builds
+// against older platforms that ship the classic header.
+#if __has_include(<mbedtls/ccm.h>)
+#define BTHOMEDECODER_USE_LEGACY_MBEDTLS_CCM 1
 #include "mbedtls/ccm.h"
+#else
+#define BTHOMEDECODER_USE_LEGACY_MBEDTLS_CCM 0
+#include "psa/crypto.h"
+#endif
 
 // ------------------------------------------------------------
 //  Structs
