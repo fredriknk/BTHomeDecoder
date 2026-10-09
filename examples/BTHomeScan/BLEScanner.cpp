@@ -8,9 +8,13 @@
 #include "ringbuffer.hpp"
 #include "esp_timer.h"
 
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+#include <BLE.h>
+#else
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#endif
 
 #include "BTHomeDecoder.h"
 
@@ -82,7 +86,11 @@ bool stringToHexString(const String &str, String &hexStr) {
 // ---------------------------------------------------------------------------
 struct BLEScanner::Impl {
     espidf::RingBuffer *queue = nullptr;
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+    BLEScan pBLEScan;
+#else
     BLEScan *pBLEScan = nullptr;
+#endif
     BTHomeDecoder bthDecoder;
     const char *bthKey = "";
 
@@ -131,64 +139,86 @@ static bool decodeBTHome(JsonObject BLEdata, JsonDocument &json,
 // ---------------------------------------------------------------------------
 // BLE scan callback — enqueues raw advertisement data as MsgPack
 // ---------------------------------------------------------------------------
-class ScanCallback : public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) override {
-        if (!s_impl || !s_impl->queue)
-            return;
+static void onAdvertised(BLEAdvertisedDevice advertisedDevice) {
+    if (!s_impl || !s_impl->queue)
+        return;
 
-        JsonDocument doc;
-        JsonObject BLEdata = doc.to<JsonObject>();
+    JsonDocument doc;
+    JsonObject BLEdata = doc.to<JsonObject>();
 
-        String mac = advertisedDevice.getAddress().toString();
-        mac.toUpperCase();
-        BLEdata["mac"] = (char *)mac.c_str();
-        BLEdata["rssi"] = (int)advertisedDevice.getRSSI();
+    String mac = advertisedDevice.getAddress().toString();
+    mac.toUpperCase();
+    BLEdata["mac"] = (char *)mac.c_str();
+    BLEdata["rssi"] = (int)advertisedDevice.getRSSI();
 
-        if (advertisedDevice.haveName())
-            BLEdata["name"] = (char *)advertisedDevice.getName().c_str();
+    if (advertisedDevice.haveName())
+        BLEdata["name"] = (char *)advertisedDevice.getName().c_str();
 
-        if (advertisedDevice.haveManufacturerData()) {
-            String hexData;
-            stringToHexString(advertisedDevice.getManufacturerData(), hexData);
-            BLEdata["mfd"] = hexData;
-        }
+    if (advertisedDevice.haveManufacturerData()) {
+        String hexData;
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+        size_t mfdLen = 0;
+        const uint8_t *mfd = advertisedDevice.getManufacturerData(&mfdLen);
+        bytesToHexString(mfd, mfdLen, hexData);
+#else
+        stringToHexString(advertisedDevice.getManufacturerData(), hexData);
+#endif
+        BLEdata["mfd"] = hexData;
+    }
 
-        if (advertisedDevice.haveServiceUUID())
-            BLEdata["svcuuid"] = (char *)advertisedDevice.getServiceUUID().toString().c_str();
+    if (advertisedDevice.haveServiceUUID())
+        BLEdata["svcuuid"] = (char *)advertisedDevice.getServiceUUID().toString().c_str();
 
-        int sdCount = advertisedDevice.getServiceDataUUIDCount();
-        if (sdCount > 0) {
-            int idx = sdCount - 1;
-            BLEdata["svduuid"] = (char *)advertisedDevice.getServiceDataUUID(idx).toString().c_str();
-            String hexData;
-            stringToHexString(advertisedDevice.getServiceData(idx), hexData);
-            BLEdata["sd"] = hexData;
-        }
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+    int sdCount = advertisedDevice.getServiceDataCount();
+#else
+    int sdCount = advertisedDevice.getServiceDataUUIDCount();
+#endif
+    if (sdCount > 0) {
+        int idx = sdCount - 1;
+        BLEdata["svduuid"] = (char *)advertisedDevice.getServiceDataUUID(idx).toString().c_str();
+        String hexData;
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+        size_t sdLen = 0;
+        const uint8_t *sd = advertisedDevice.getServiceData(idx, &sdLen);
+        bytesToHexString(sd, sdLen, hexData);
+#else
+        stringToHexString(advertisedDevice.getServiceData(idx), hexData);
+#endif
+        BLEdata["sd"] = hexData;
+    }
 
-        if (advertisedDevice.haveTXPower())
-            BLEdata["txpwr"] = (int8_t)advertisedDevice.getTXPower();
+    if (advertisedDevice.haveTXPower())
+        BLEdata["txpwr"] = (int8_t)advertisedDevice.getTXPower();
 
-        BLEdata["time"] = fseconds();
+    BLEdata["time"] = fseconds();
 
-        void *ble_adv = nullptr;
-        size_t total = measureMsgPack(BLEdata);
-        if (s_impl->queue->send_acquire((void **)&ble_adv, total, 0) != pdTRUE) {
-            s_impl->acquireFail++;
-            return;
-        }
+    void *ble_adv = nullptr;
+    size_t total = measureMsgPack(BLEdata);
+    if (s_impl->queue->send_acquire((void **)&ble_adv, total, 0) != pdTRUE) {
+        s_impl->acquireFail++;
+        return;
+    }
 
-        size_t n = serializeMsgPack(BLEdata, ble_adv, total);
-        if (n != total) {
-            log_e("serializeMsgPack: expected %u got %u", total, n);
+    size_t n = serializeMsgPack(BLEdata, ble_adv, total);
+    if (n != total) {
+        log_e("serializeMsgPack: expected %u got %u", total, n);
+    } else {
+        if (s_impl->queue->send_complete(ble_adv) != pdTRUE) {
+            s_impl->queueFull++;
         } else {
-            if (s_impl->queue->send_complete(ble_adv) != pdTRUE) {
-                s_impl->queueFull++;
-            } else {
-                s_impl->queue->update_high_watermark();
-            }
+            s_impl->queue->update_high_watermark();
         }
     }
+}
+
+#if ESP_ARDUINO_VERSION_MAJOR < 4
+class ScanCallback : public BLEAdvertisedDeviceCallbacks {
+    void onResult(BLEAdvertisedDevice advertisedDevice) override {
+        onAdvertised(advertisedDevice);
+    }
 };
+#endif
 
 // ---------------------------------------------------------------------------
 // Scan task (runs forever on its own RTOS task)
@@ -196,6 +226,21 @@ class ScanCallback : public BLEAdvertisedDeviceCallbacks {
 static void scanTask(void *param) {
     auto *impl = static_cast<BLEScanner::Impl *>(param);
 
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+    BLE.begin("");
+    impl->pBLEScan = BLE.getScan();
+    impl->pBLEScan.onResult(onAdvertised);
+    impl->pBLEScan.setActiveScan(impl->activeScan);
+    impl->pBLEScan.setInterval(impl->scanInterval);
+    impl->pBLEScan.setWindow(impl->scanWindow);
+
+    while (true) {
+        BLEScan::Results foundDevices = impl->pBLEScan.startBlocking(impl->scanTimeMs);
+        log_d("Devices found: %d", foundDevices.size());
+        impl->pBLEScan.clearResults();
+        delay(1);
+    }
+#else
     BLEDevice::init("");
     impl->pBLEScan = BLEDevice::getScan();
     impl->pBLEScan->setAdvertisedDeviceCallbacks(new ScanCallback(), true, true);
@@ -209,6 +254,7 @@ static void scanTask(void *param) {
         impl->pBLEScan->clearResults();
         delay(1);
     }
+#endif
 }
 
 // ---------------------------------------------------------------------------
